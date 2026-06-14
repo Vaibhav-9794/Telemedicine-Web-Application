@@ -26,18 +26,43 @@ export function CallProvider({ children }) {
   // Call state
   const [callStatus, setCallStatus] = useState('idle');
   // idle | outgoing-ringing | incoming-ringing | connecting | in-call
-  const [callerInfo, setCallerInfo] = useState(null);  // { from, callerName, signal }
-  const [callTarget, setCallTarget] = useState(null);  // { _id, name } — who we're calling
+  const [callerInfo, setCallerInfo] = useState(null);
+  const [callTarget, setCallTarget] = useState(null);
   const [isVideoEnabled, setIsVideoEnabled] = useState(true);
   const [isAudioEnabled, setIsAudioEnabled] = useState(true);
 
+  // Stream state — stored in state so useEffect can re-attach when video elements mount
+  const [localStream, setLocalStream] = useState(null);
+  const [remoteStream, setRemoteStream] = useState(null);
+
   // Refs
   const peerConnectionRef = useRef(null);
-  const localStreamRef = useRef(null);
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
   const iceCandidateQueueRef = useRef([]);
   const ringingTimerRef = useRef(null);
+  const callStatusRef = useRef('idle'); // mirror for socket handlers
+
+  // Keep callStatusRef in sync
+  useEffect(() => {
+    callStatusRef.current = callStatus;
+  }, [callStatus]);
+
+  // ── Attach local stream to video element whenever either changes ──────────
+  useEffect(() => {
+    if (localVideoRef.current && localStream) {
+      localVideoRef.current.srcObject = localStream;
+      console.log('[Call] Attached local stream to video element');
+    }
+  }, [localStream, callStatus]); // re-run when callStatus changes (video element mounts/unmounts)
+
+  // ── Attach remote stream to video element whenever either changes ─────────
+  useEffect(() => {
+    if (remoteVideoRef.current && remoteStream) {
+      remoteVideoRef.current.srcObject = remoteStream;
+      console.log('[Call] Attached remote stream to video element');
+    }
+  }, [remoteStream, callStatus]);
 
   // ── Socket setup: join room + listen for call events ──────────────────────
   useEffect(() => {
@@ -48,8 +73,7 @@ export function CallProvider({ children }) {
     // INCOMING CALL
     socket.on('incomingCall', (data) => {
       console.log('[Call] Incoming call from:', data.callerName, data.from);
-      // Don't accept if already in a call
-      if (callStatus !== 'idle') {
+      if (callStatusRef.current !== 'idle') {
         console.log('[Call] Already busy, auto-rejecting');
         socket.emit('rejectCall', { to: data.from, reason: 'busy' });
         return;
@@ -105,7 +129,6 @@ export function CallProvider({ children }) {
         if (pc && pc.remoteDescription) {
           await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
         } else {
-          // Queue it — remote description not set yet
           iceCandidateQueueRef.current.push(data.candidate);
         }
       } catch (e) {
@@ -120,21 +143,18 @@ export function CallProvider({ children }) {
       socket.off('callEnded');
       socket.off('iceCandidate');
     };
-  }, [user?._id, callStatus]);
+  }, [user?._id]);
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
-  const getLocalStream = useCallback(async () => {
+  const getLocalMedia = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: true,
         audio: true,
       });
-      localStreamRef.current = stream;
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = stream;
-      }
-      console.log('[Call] Got local media stream');
+      setLocalStream(stream);
+      console.log('[Call] Got local media stream, tracks:', stream.getTracks().length);
       return stream;
     } catch (err) {
       console.error('[Call] Media access error:', err);
@@ -158,18 +178,25 @@ export function CallProvider({ children }) {
     };
 
     pc.ontrack = (event) => {
-      console.log('[Call] Received remote track');
-      if (remoteVideoRef.current && event.streams[0]) {
-        remoteVideoRef.current.srcObject = event.streams[0];
+      console.log('[Call] Received remote track, streams:', event.streams.length);
+      if (event.streams[0]) {
+        setRemoteStream(event.streams[0]);
       }
     };
 
     pc.oniceconnectionstatechange = () => {
-      console.log('[Call] ICE state:', pc.iceConnectionState);
+      console.log('[Call] ICE connection state:', pc.iceConnectionState);
+      if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+        console.log('[Call] ICE connected — media should be flowing');
+      }
       if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
         addToast('Connection lost. Call ended.', 'warning');
         cleanupCall();
       }
+    };
+
+    pc.onconnectionstatechange = () => {
+      console.log('[Call] Connection state:', pc.connectionState);
     };
 
     peerConnectionRef.current = pc;
@@ -178,10 +205,11 @@ export function CallProvider({ children }) {
 
   const cleanupCall = useCallback(() => {
     console.log('[Call] Cleaning up call state');
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach((t) => t.stop());
-      localStreamRef.current = null;
+    if (localStream) {
+      localStream.getTracks().forEach((t) => t.stop());
     }
+    setLocalStream(null);
+    setRemoteStream(null);
     if (peerConnectionRef.current) {
       peerConnectionRef.current.close();
       peerConnectionRef.current = null;
@@ -195,19 +223,19 @@ export function CallProvider({ children }) {
     setCallTarget(null);
     setIsVideoEnabled(true);
     setIsAudioEnabled(true);
-  }, []);
+  }, [localStream]);
 
   // ── Public API ────────────────────────────────────────────────────────────
 
   /** Start a call to a contact */
   const startCall = useCallback(async (contact) => {
-    if (!contact?._id || callStatus !== 'idle') return;
+    if (!contact?._id || callStatusRef.current !== 'idle') return;
 
     console.log('[Call] Starting call to:', contact.name, contact._id);
     setCallTarget(contact);
     setCallStatus('outgoing-ringing');
 
-    const stream = await getLocalStream();
+    const stream = await getLocalMedia();
     if (!stream) {
       cleanupCall();
       return;
@@ -232,7 +260,7 @@ export function CallProvider({ children }) {
 
       // Timeout: if no answer in 30 seconds, cancel
       ringingTimerRef.current = setTimeout(() => {
-        if (callStatus === 'outgoing-ringing') {
+        if (callStatusRef.current === 'outgoing-ringing') {
           addToast('No answer. Call timed out.', 'info');
           endCall();
         }
@@ -242,7 +270,7 @@ export function CallProvider({ children }) {
       addToast('Failed to initiate call.', 'error');
       cleanupCall();
     }
-  }, [user, callStatus, getLocalStream, createPeerConnection, cleanupCall, addToast]);
+  }, [user, getLocalMedia, createPeerConnection, cleanupCall, addToast]);
 
   /** Accept an incoming call */
   const acceptCall = useCallback(async () => {
@@ -251,7 +279,7 @@ export function CallProvider({ children }) {
     console.log('[Call] Accepting call from:', callerInfo.callerName);
     setCallStatus('connecting');
 
-    const stream = await getLocalStream();
+    const stream = await getLocalMedia();
     if (!stream) {
       cleanupCall();
       return;
@@ -285,7 +313,7 @@ export function CallProvider({ children }) {
       addToast('Failed to connect call.', 'error');
       cleanupCall();
     }
-  }, [callerInfo, getLocalStream, createPeerConnection, cleanupCall, addToast]);
+  }, [callerInfo, getLocalMedia, createPeerConnection, cleanupCall, addToast]);
 
   /** Reject an incoming call */
   const rejectCall = useCallback(() => {
@@ -309,27 +337,28 @@ export function CallProvider({ children }) {
 
   /** Toggle video */
   const toggleVideo = useCallback(() => {
-    const stream = localStreamRef.current;
-    if (stream) {
-      const videoTrack = stream.getVideoTracks()[0];
+    if (localStream) {
+      const videoTrack = localStream.getVideoTracks()[0];
       if (videoTrack) {
         videoTrack.enabled = !videoTrack.enabled;
         setIsVideoEnabled(videoTrack.enabled);
       }
     }
-  }, []);
+  }, [localStream]);
 
   /** Toggle audio */
   const toggleAudio = useCallback(() => {
-    const stream = localStreamRef.current;
-    if (stream) {
-      const audioTrack = stream.getAudioTracks()[0];
+    if (localStream) {
+      const audioTrack = localStream.getAudioTracks()[0];
       if (audioTrack) {
         audioTrack.enabled = !audioTrack.enabled;
         setIsAudioEnabled(audioTrack.enabled);
       }
     }
-  }, []);
+  }, [localStream]);
+
+  // Determine if we should show the video call UI
+  const showVideoUI = callStatus === 'in-call' || callStatus === 'connecting' || callStatus === 'outgoing-ringing';
 
   const contextValue = {
     callStatus,
@@ -337,8 +366,6 @@ export function CallProvider({ children }) {
     callTarget,
     isVideoEnabled,
     isAudioEnabled,
-    localVideoRef,
-    remoteVideoRef,
     startCall,
     acceptCall,
     rejectCall,
@@ -360,7 +387,6 @@ export function CallProvider({ children }) {
               <div className="w-20 h-20 rounded-full bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center text-2xl font-bold text-white uppercase animate-pulse">
                 {callerInfo.callerName?.charAt(0) || '?'}
               </div>
-              {/* Ringing rings */}
               <div className="absolute inset-0 rounded-full border-4 border-primary-400/40 animate-ping" />
             </div>
 
@@ -393,35 +419,11 @@ export function CallProvider({ children }) {
         </div>
       )}
 
-      {/* ═══ OUTGOING RINGING OVERLAY ═══ */}
-      {callStatus === 'outgoing-ringing' && callTarget && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/90">
-          <div className="text-center space-y-6">
-            <div className="relative mx-auto w-24 h-24">
-              <div className="w-24 h-24 rounded-full bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center text-3xl font-bold text-white uppercase">
-                {callTarget.name?.charAt(0) || '?'}
-              </div>
-              <div className="absolute inset-0 rounded-full border-4 border-primary-400/30 animate-ping" />
-            </div>
-            <div>
-              <p className="text-xl font-bold text-white">{callTarget.name}</p>
-              <p className="text-sm text-slate-400 mt-1 animate-pulse">Ringing...</p>
-            </div>
-            <button
-              onClick={endCall}
-              className="w-16 h-16 mx-auto rounded-full bg-red-500 hover:bg-red-600 text-white flex items-center justify-center shadow-lg shadow-red-500/30 transition-all"
-            >
-              <PhoneOff size={24} />
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* ═══ IN-CALL VIDEO OVERLAY ═══ */}
-      {(callStatus === 'in-call' || callStatus === 'connecting') && (
+      {/* ═══ VIDEO CALL OVERLAY — outgoing ringing + connecting + in-call ═══ */}
+      {showVideoUI && (
         <div className="fixed inset-0 z-[9998] bg-slate-950/95 flex flex-col items-center justify-center gap-6 p-4">
           <div className="relative w-full max-w-4xl aspect-video bg-slate-900 rounded-3xl overflow-hidden shadow-2xl border border-slate-800">
-            {/* Remote video */}
+            {/* Remote video — full frame */}
             <video
               ref={remoteVideoRef}
               autoPlay
@@ -429,11 +431,27 @@ export function CallProvider({ children }) {
               className="w-full h-full object-cover"
             />
 
-            {/* Connecting state */}
-            {callStatus === 'connecting' && (
+            {/* Ringing / Connecting overlay */}
+            {callStatus !== 'in-call' && (
               <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/80 text-white gap-3">
-                <div className="w-16 h-16 rounded-full border-4 border-primary-200 border-t-primary-500 animate-spin" />
-                <p className="text-sm font-semibold">Connecting...</p>
+                <div className="relative w-20 h-20">
+                  <div className="w-20 h-20 rounded-full bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center text-2xl font-bold uppercase animate-pulse">
+                    {(callTarget?.name || callerInfo?.callerName)?.charAt(0) || '?'}
+                  </div>
+                  {callStatus === 'outgoing-ringing' && (
+                    <div className="absolute inset-0 rounded-full border-4 border-primary-400/30 animate-ping" />
+                  )}
+                </div>
+                <p className="text-base font-bold">
+                  {callStatus === 'outgoing-ringing'
+                    ? `Calling ${callTarget?.name}...`
+                    : 'Connecting...'}
+                </p>
+                <p className="text-xs text-slate-400">
+                  {callStatus === 'outgoing-ringing'
+                    ? 'Waiting for response'
+                    : 'Establishing secure connection'}
+                </p>
               </div>
             )}
 
@@ -445,15 +463,21 @@ export function CallProvider({ children }) {
               </div>
             )}
 
-            {/* Local video PIP */}
-            <div className="absolute bottom-4 right-4 w-36 h-28 rounded-2xl overflow-hidden border-2 border-white/20 bg-slate-800 shadow-lg">
+            {/* Local video PIP — always visible during call */}
+            <div className="absolute bottom-4 right-4 w-40 h-30 rounded-2xl overflow-hidden border-2 border-white/20 bg-slate-800 shadow-lg">
               <video
                 ref={localVideoRef}
                 autoPlay
                 playsInline
                 muted
-                className="w-full h-full object-cover"
+                className="w-full h-full object-cover mirror"
+                style={{ transform: 'scaleX(-1)' }}
               />
+              {!localStream && (
+                <div className="absolute inset-0 flex items-center justify-center bg-slate-900 text-slate-500 text-[10px]">
+                  Camera loading...
+                </div>
+              )}
             </div>
           </div>
 
