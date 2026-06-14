@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+
+# Environment files
+.env
+.env.local
+.env.production
+.env.*.local
+
+# Next.js build output
+.next/
+out/
+
+# Database files (local JSON DB)
+backend/data/*.json
+
+# Upload files
+backend/public/uploads/*
+!backend/public/uploads/.gitkeep
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+npm-debug.log*
+
+# Build artifacts
+dist/
+build/
+.turbo/
+
+# Misc
+*.tgz
+.gemini/
