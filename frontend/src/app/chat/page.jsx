@@ -5,17 +5,20 @@ import { useRouter } from 'next/navigation';
 import axios from 'axios';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/context/ToastContext';
+import { useCall } from '@/context/CallContext';
 import { initSocket, getSocket } from '@/services/socket';
 import Sidebar from '@/components/Sidebar';
 import Spinner from '@/components/Spinner';
 import {
-  Send, Video, VideoOff, Mic, MicOff, PhoneOff, Phone,
-  MessageSquare, User, X, Search, Camera, Activity
+  Send, Video, MessageSquare, User
 } from 'lucide-react';
 
 export default function ChatPage() {
   const { user, loading, isAuthenticated } = useAuth();
   const { addToast } = useToast();
+  const callCtx = useCall();
+  const startCall = callCtx?.startCall;
+  const callStatus = callCtx?.callStatus || 'idle';
   const router = useRouter();
 
   const [contacts, setContacts] = useState([]);
@@ -25,16 +28,7 @@ export default function ChatPage() {
   const [loadingContacts, setLoadingContacts] = useState(true);
   const [loadingMessages, setLoadingMessages] = useState(false);
 
-  // Video call state
-  const [inCall, setInCall] = useState(false);
-  const [callStatus, setCallStatus] = useState('idle'); // idle | calling | in-call | incoming
-  const [callerInfo, setCallerInfo] = useState(null);
-
   const messagesEndRef = useRef(null);
-  const localVideoRef = useRef(null);
-  const remoteVideoRef = useRef(null);
-  const peerConnectionRef = useRef(null);
-  const localStreamRef = useRef(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -44,7 +38,7 @@ export default function ChatPage() {
     scrollToBottom();
   }, [messages]);
 
-  // Initialize socket connection
+  // Initialize socket connection for chat messages
   useEffect(() => {
     if (!user) return;
 
@@ -56,30 +50,6 @@ export default function ChatPage() {
         if (prev.find(m => m._id === msg._id)) return prev;
         return [...prev, msg];
       });
-    });
-
-    socket.on('incomingCall', ({ signal, from, callerName }) => {
-      setCallerInfo({ signal, from, callerName });
-      setCallStatus('incoming');
-    });
-
-    socket.on('callAccepted', async ({ signal }) => {
-      try {
-        if (peerConnectionRef.current && signal) {
-          await peerConnectionRef.current.setRemoteDescription(
-            new RTCSessionDescription(signal)
-          );
-        }
-        setCallStatus('in-call');
-        addToast('Video consultation connected!', 'success');
-      } catch (e) {
-        console.error('Error setting remote description:', e);
-      }
-    });
-
-    socket.on('callEnded', () => {
-      endCall();
-      addToast('Call ended by the other party.', 'info');
     });
 
     // Fetch contacts
@@ -98,9 +68,6 @@ export default function ChatPage() {
 
     return () => {
       socket.off('messageReceived');
-      socket.off('incomingCall');
-      socket.off('callAccepted');
-      socket.off('callEnded');
     };
   }, [user]);
 
@@ -137,7 +104,7 @@ export default function ChatPage() {
       message: newMessage.trim()
     });
 
-    // Optimistically add to UI if socket fails to echo or is slow
+    // Optimistically add to UI
     const optimisticMsg = {
       _id: Date.now().toString(),
       senderId: user._id,
@@ -149,145 +116,9 @@ export default function ChatPage() {
     setNewMessage('');
   };
 
-  // ─── WebRTC Consultation Helpers ──────────────────────────────────────────
-  const createPeerConnection = async () => {
-    const pc = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-    });
-
-    pc.ontrack = (event) => {
-      if (remoteVideoRef.current) {
-        remoteVideoRef.current.srcObject = event.streams[0];
-      }
-    };
-
-    peerConnectionRef.current = pc;
-    return pc;
-  };
-
-  const getLocalStream = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: true,
-        audio: true
-      });
-      localStreamRef.current = stream;
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = stream;
-      }
-      return stream;
-    } catch (err) {
-      console.error('Media access error:', err);
-      addToast('Camera/microphone access denied or unavailable. Initializing simulation.', 'warning');
-      return null;
-    }
-  };
-
-  const startCall = async () => {
-    if (!activeContact) return;
-    setCallStatus('calling');
-    setInCall(true);
-
-    const stream = await getLocalStream();
-    const pc = await createPeerConnection();
-
-    if (stream && pc) {
-      stream.getTracks().forEach(track => pc.addTrack(track, stream));
-    }
-
-    try {
-      let offer = null;
-      if (pc) {
-        offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-      }
-
-      const socket = getSocket();
-      if (socket) {
-        socket.emit('callUser', {
-          userToCall: activeContact._id,
-          signalData: offer,
-          from: user._id,
-          callerName: user.name
-        });
-      }
-
-      addToast(`Initiating connection to ${activeContact.name}...`, 'info');
-
-      // Simulation backup (so the UI functions even if other client is offline/disconnected)
-      setTimeout(() => {
-        setCallStatus(prev => {
-          if (prev === 'calling') {
-            addToast('Video consultation connected (Simulated connection)!', 'success');
-            return 'in-call';
-          }
-          return prev;
-        });
-      }, 3000);
-    } catch (err) {
-      console.error('Failed to initiate call:', err);
-      addToast('Failed to start video consultation session', 'error');
-      endCall();
-    }
-  };
-
-  const answerCall = async () => {
-    if (!callerInfo) return;
-    setCallStatus('in-call');
-    setInCall(true);
-
-    const stream = await getLocalStream();
-    const pc = await createPeerConnection();
-
-    if (stream && pc) {
-      stream.getTracks().forEach(track => pc.addTrack(track, stream));
-    }
-
-    try {
-      let answer = null;
-      if (pc && callerInfo.signal) {
-        await pc.setRemoteDescription(new RTCSessionDescription(callerInfo.signal));
-        answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-      }
-
-      const socket = getSocket();
-      if (socket) {
-        socket.emit('answerCall', {
-          to: callerInfo.from,
-          signal: answer
-        });
-      }
-    } catch (err) {
-      console.error('Failed to answer call:', err);
-      addToast('Failed to connect consultation stream', 'error');
-      endCall();
-    }
-  };
-
-  const endCall = () => {
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach(t => t.stop());
-      localStreamRef.current = null;
-    }
-    if (peerConnectionRef.current) {
-      peerConnectionRef.current.close();
-      peerConnectionRef.current = null;
-    }
-    if (activeContact && callStatus !== 'incoming') {
-      const socket = getSocket();
-      socket?.emit('endCall', { to: activeContact._id });
-    }
-    setInCall(false);
-    setCallStatus('idle');
-    setCallerInfo(null);
-    if (localVideoRef.current) localVideoRef.current.srcObject = null;
-    if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
-  };
-
-  const rejectCall = () => {
-    setCallStatus('idle');
-    setCallerInfo(null);
+  const handleStartCall = () => {
+    if (!activeContact || !startCall) return;
+    startCall(activeContact);
   };
 
   const formatTime = (ts) => {
@@ -375,8 +206,8 @@ export default function ChatPage() {
                     </div>
                   </div>
                   <button
-                    onClick={startCall}
-                    disabled={inCall}
+                    onClick={handleStartCall}
+                    disabled={callStatus !== 'idle'}
                     className="flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 disabled:bg-primary-400 text-white rounded-xl text-xs font-bold transition-all shadow-sm shadow-primary-500/10"
                   >
                     <Video size={14} />
@@ -446,87 +277,6 @@ export default function ChatPage() {
             )}
           </div>
         </div>
-
-        {/* ── WebRTC Video consultation Overlay ── */}
-        {inCall && (
-          <div className="fixed inset-0 z-50 bg-slate-950/90 flex flex-col items-center justify-center gap-6 p-4">
-            <div className="relative w-full max-w-4xl aspect-video bg-slate-900 rounded-3xl overflow-hidden shadow-2xl border border-slate-800">
-              {/* Remote stream feed */}
-              <video ref={remoteVideoRef} autoPlay playsInline className="w-full h-full object-cover" />
-
-              {/* Status prompt */}
-              {callStatus !== 'in-call' && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center text-white bg-slate-950/80 gap-3">
-                  <div className="w-16 h-16 rounded-full bg-primary-500/20 border-2 border-primary-500 flex items-center justify-center text-2xl font-bold uppercase animate-pulse">
-                    {activeContact?.name?.charAt(0) || '?'}
-                  </div>
-                  <p className="text-base font-bold">
-                    {callStatus === 'calling' ? `Calling ${activeContact?.name}…` : 'Securing clinical endpoint...'}
-                  </p>
-                  <p className="text-xs text-slate-400 font-medium">Initializing encrypted WebRTC consultation channel</p>
-                </div>
-              )}
-
-              {/* Local Video feed (PIP) */}
-              <div className="absolute bottom-4 right-4 w-36 h-28 rounded-2xl overflow-hidden border-2 border-white/20 bg-slate-850 shadow-md">
-                <video ref={localVideoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
-              </div>
-
-              {/* Connection stats status */}
-              {callStatus === 'in-call' && (
-                <div className="absolute top-4 left-4 flex items-center gap-1.5 px-3 py-1 bg-primary-600/80 backdrop-blur rounded-full text-white text-[10px] font-bold">
-                  <span className="w-1.5 h-1.5 bg-white rounded-full animate-pulse" />
-                  Live consultation • WebRTC
-                </div>
-              )}
-            </div>
-
-            {/* Controls */}
-            <div className="flex items-center gap-4">
-              <button className="w-12 h-12 rounded-full bg-slate-800 hover:bg-slate-700 text-white flex items-center justify-center transition-colors border border-slate-700">
-                <Mic size={18} />
-              </button>
-              <button
-                onClick={endCall}
-                className="w-14 h-14 rounded-full bg-red-600 hover:bg-red-700 text-white flex items-center justify-center transition-all shadow-lg shadow-red-500/30"
-              >
-                <PhoneOff size={20} />
-              </button>
-              <button className="w-12 h-12 rounded-full bg-slate-800 hover:bg-slate-700 text-white flex items-center justify-center transition-colors border border-slate-700">
-                <Camera size={18} />
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Incoming Consultation prompt banner */}
-        {callStatus === 'incoming' && !inCall && (
-          <div className="fixed bottom-6 right-6 z-50 bg-white dark:bg-slate-800 border border-slate-205 dark:border-slate-750 rounded-3xl p-5 shadow-2xl w-80 space-y-4 text-left">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center font-bold text-white text-sm uppercase animate-pulse">
-                {callerInfo?.callerName?.charAt(0) || '?'}
-              </div>
-              <div>
-                <p className="text-xs font-bold text-slate-800 dark:text-slate-100">Incoming Consultation Request</p>
-                <p className="text-[10px] text-slate-400 font-semibold">{callerInfo?.callerName || 'Unknown practitioner'}</p>
-              </div>
-            </div>
-            <div className="flex gap-2">
-              <button
-                onClick={rejectCall}
-                className="flex-1 py-2 bg-red-50 hover:bg-red-100 dark:bg-red-950/40 text-red-650 dark:text-red-400 rounded-xl text-xs font-bold border border-red-100 dark:border-red-900/40 flex items-center justify-center gap-1"
-              >
-                Decline
-              </button>
-              <button
-                onClick={answerCall}
-                className="flex-1 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1 shadow-sm"
-              >
-                Accept Consultation
-              </button>
-            </div>
-          </div>
-        )}
       </div>
     </Sidebar>
   );

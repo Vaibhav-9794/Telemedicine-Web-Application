@@ -13,8 +13,8 @@ const nextConfig = {
     optimizePackageImports: ['lucide-react'],
   },
 
-  // Build as standalone for Docker/VPS deployment (includes all dependencies)
-  output: 'standalone',
+  // Use 'standalone' output only for Docker/VPS: uncomment below
+  // output: 'standalone',
 
   async headers() {
     return [{

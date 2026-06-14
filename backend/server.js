@@ -99,38 +99,38 @@ const io = new Server(server, {
 });
 
 io.on('connection', (socket) => {
-  console.log(`New socket connection established: ${socket.id}`);
+  console.log(`[Socket] Connected: ${socket.id}`);
 
   // User registers their active user ID to join a private room
   socket.on('join', (userId) => {
     socket.join(userId);
-    console.log(`Socket ${socket.id} joined personal room for user: ${userId}`);
+    console.log(`[Socket] ${socket.id} joined room: ${userId}`);
   });
 
-  // Handle instant chat message exchange
+  // ── Chat Messages ─────────────────────────────────────────────────────
   socket.on('sendMessage', async (data) => {
     const { senderId, receiverId, message } = data;
     if (!senderId || !receiverId || !message) return;
 
     try {
-      // Save message details persistently in the database
       const msg = await Message.create({
         senderId,
         receiverId,
         message,
         timestamp: new Date().toISOString()
       });
-
-      // Broadcast the saved message back to both the sender and receiver
       io.to(receiverId).to(senderId).emit('messageReceived', msg);
     } catch (error) {
-      console.error('Socket message save failed:', error);
+      console.error('[Socket] Message save failed:', error);
     }
   });
 
-  // WebRTC Signal Negotiation: Ringing/Initiating a call
+  // ── WebRTC Call Signaling ─────────────────────────────────────────────
+
+  // Caller initiates — relay offer to callee
   socket.on('callUser', (data) => {
     const { userToCall, signalData, from, callerName } = data;
+    console.log(`[Call] ${callerName} (${from}) → calling → ${userToCall}`);
     io.to(userToCall).emit('incomingCall', {
       signal: signalData,
       from,
@@ -138,20 +138,36 @@ io.on('connection', (socket) => {
     });
   });
 
-  // WebRTC Signal Negotiation: Answering a call
+  // Callee accepts — relay answer back to caller
   socket.on('answerCall', (data) => {
     const { to, signal } = data;
+    console.log(`[Call] Answer sent → ${to}`);
     io.to(to).emit('callAccepted', { signal });
   });
 
-  // WebRTC Signal Negotiation: Rejecting or closing a call
+  // Callee rejects — notify caller
+  socket.on('rejectCall', (data) => {
+    const { to, reason } = data;
+    console.log(`[Call] Call rejected → ${to}, reason: ${reason}`);
+    io.to(to).emit('callRejected', { reason });
+  });
+
+  // Either party ends the call
   socket.on('endCall', (data) => {
     const { to } = data;
+    console.log(`[Call] Call ended → ${to}`);
     io.to(to).emit('callEnded');
   });
 
+  // ICE candidate exchange — critical for NAT traversal
+  socket.on('iceCandidate', (data) => {
+    const { to, candidate } = data;
+    console.log(`[Call] ICE candidate → ${to}`);
+    io.to(to).emit('iceCandidate', { candidate });
+  });
+
   socket.on('disconnect', () => {
-    console.log(`Socket disconnected: ${socket.id}`);
+    console.log(`[Socket] Disconnected: ${socket.id}`);
   });
 });
 

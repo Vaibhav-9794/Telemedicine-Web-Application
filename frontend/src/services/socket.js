@@ -1,31 +1,72 @@
 import { io } from 'socket.io-client';
 
 let socket = null;
+let currentUserId = null;
 
 /**
- * Initializes and joins the user to the socket server
+ * Get the socket server URL.
+ * In production, connect to the API URL; in dev, use localhost.
+ */
+const getSocketUrl = () => {
+  if (typeof window !== 'undefined') {
+    // Use the same origin in production, or localhost in dev
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+    if (apiUrl) return apiUrl;
+  }
+  return 'http://localhost:5000';
+};
+
+/**
+ * Initializes socket connection and joins the user's personal room.
+ * Safe to call multiple times — reuses existing connection.
  * @param {string} userId - ID of authenticated user
  */
 export const initSocket = (userId) => {
-  if (socket) {
-    if (socket.connected) {
-      socket.emit('join', userId);
-    }
+  currentUserId = userId;
+
+  // If already connected with the same user, just re-join
+  if (socket && socket.connected) {
+    socket.emit('join', userId);
+    console.log('[Socket] Re-joined room for user:', userId);
     return socket;
   }
 
-  socket = io('http://localhost:5000', {
+  // If socket exists but disconnected, clean up first
+  if (socket) {
+    socket.disconnect();
+    socket = null;
+  }
+
+  socket = io(getSocketUrl(), {
     autoConnect: true,
-    transports: ['websocket', 'polling']
+    transports: ['websocket', 'polling'],
+    reconnection: true,
+    reconnectionAttempts: 10,
+    reconnectionDelay: 1000,
   });
 
   socket.on('connect', () => {
-    console.log('Successfully connected to Socket server:', socket.id);
-    socket.emit('join', userId);
+    console.log('[Socket] Connected:', socket.id);
+    if (currentUserId) {
+      socket.emit('join', currentUserId);
+      console.log('[Socket] Joined room:', currentUserId);
+    }
   });
 
-  socket.on('disconnect', () => {
-    console.log('Disconnected from Socket server');
+  socket.on('reconnect', () => {
+    console.log('[Socket] Reconnected:', socket.id);
+    if (currentUserId) {
+      socket.emit('join', currentUserId);
+      console.log('[Socket] Re-joined room after reconnect:', currentUserId);
+    }
+  });
+
+  socket.on('disconnect', (reason) => {
+    console.log('[Socket] Disconnected:', reason);
+  });
+
+  socket.on('connect_error', (err) => {
+    console.error('[Socket] Connection error:', err.message);
   });
 
   return socket;
@@ -43,6 +84,7 @@ export const disconnectSocket = () => {
   if (socket) {
     socket.disconnect();
     socket = null;
-    console.log('Cleared socket connection instance');
+    currentUserId = null;
+    console.log('[Socket] Disconnected and cleared');
   }
 };
