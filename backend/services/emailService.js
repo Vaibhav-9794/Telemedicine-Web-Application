@@ -114,4 +114,46 @@ const sendContactConfirmation = async ({ name, email, subject, message, date }) 
   return transporter.sendMail(mailOptions);
 };
 
-module.exports = { sendContactNotification, sendContactConfirmation };
+/**
+ * Send password reset email
+ */
+const sendPasswordResetEmail = async (email, resetUrl, userName) => {
+  const transporter = createTransporter();
+
+  const mailOptions = {
+    from: `"MediCare" <${process.env.SMTP_EMAIL}>`,
+    to: email,
+    subject: 'Password Reset Request — MediCare',
+    html: `
+      <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 16px; overflow: hidden;">
+        <div style="background: linear-gradient(135deg, #0d9488, #0891b2); padding: 30px; text-align: center;">
+          <h1 style="color: white; margin: 0; font-size: 24px;">🔐 Password Reset</h1>
+          <p style="color: #ccfbf1; margin: 8px 0 0; font-size: 14px;">Reset your MediCare account password</p>
+        </div>
+        <div style="padding: 30px;">
+          <p style="color: #334155; font-size: 15px; line-height: 1.6;">
+            Hi <strong>${userName || 'User'}</strong>,
+          </p>
+          <p style="color: #334155; font-size: 14px; line-height: 1.6;">
+            We received a request to reset your password. Click the button below to set a new password:
+          </p>
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="${resetUrl}" style="background: linear-gradient(135deg, #0d9488, #0891b2); color: white; padding: 14px 32px; border-radius: 12px; text-decoration: none; font-weight: 600; font-size: 15px; display: inline-block;">
+              Reset Password
+            </a>
+          </div>
+          <p style="color: #64748b; font-size: 13px; line-height: 1.5;">
+            This link will expire in <strong>1 hour</strong>. If you didn't request this reset, you can safely ignore this email.
+          </p>
+        </div>
+        <div style="background: #f8fafc; padding: 16px; text-align: center; border-top: 1px solid #e2e8f0;">
+          <p style="margin: 0; color: #94a3b8; font-size: 12px;">© ${new Date().getFullYear()} MediCare Telemedicine • Automated Security Email</p>
+        </div>
+      </div>
+    `,
+  };
+
+  return transporter.sendMail(mailOptions);
+};
+
+module.exports = { sendContactNotification, sendContactConfirmation, sendPasswordResetEmail };

@@ -18,6 +18,11 @@ const prescriptionRoutes = require('./routes/prescriptionRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
 const contactRoutes = require('./routes/contactRoutes');
+const passwordRoutes = require('./routes/passwordRoutes');
+const reviewRoutes = require('./routes/reviewRoutes');
+const verificationRoutes = require('./routes/verificationRoutes');
+const notificationRoutes = require('./routes/notificationRoutes');
+const availabilityRoutes = require('./routes/availabilityRoutes');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -79,6 +84,11 @@ app.use('/api/prescriptions', prescriptionRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/contact', contactRoutes);
+app.use('/api/auth', passwordRoutes);
+app.use('/api/reviews', reviewRoutes);
+app.use('/api/verification', verificationRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/availability', availabilityRoutes);
 
 // AI Symptom Checker Route
 app.post('/api/ai/symptom-checker', (req, res) => {

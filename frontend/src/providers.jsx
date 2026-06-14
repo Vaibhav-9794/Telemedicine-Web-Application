@@ -4,6 +4,7 @@ import { ThemeProvider } from '@/context/ThemeContext';
 import { AuthProvider } from '@/context/AuthContext';
 import { ToastProvider } from '@/context/ToastContext';
 import { CallProvider } from '@/context/CallContext';
+import { NotificationProvider } from '@/context/NotificationContext';
 
 export default function Providers({ children }) {
   return (
@@ -11,7 +12,9 @@ export default function Providers({ children }) {
       <AuthProvider>
         <ToastProvider>
           <CallProvider>
-            {children}
+            <NotificationProvider>
+              {children}
+            </NotificationProvider>
           </CallProvider>
         </ToastProvider>
       </AuthProvider>

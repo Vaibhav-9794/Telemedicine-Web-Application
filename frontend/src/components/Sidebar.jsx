@@ -8,8 +8,9 @@ import { useTheme } from '@/context/ThemeContext';
 import {
   LayoutDashboard, Calendar, Search, Stethoscope, FileText, MessageSquare,
   Settings, Users, ClipboardList, Sun, Moon, LogOut, Heart, ChevronLeft,
-  ChevronRight, Brain, Menu, X
+  ChevronRight, Brain, Menu, X, ShieldCheck, CalendarClock
 } from 'lucide-react';
+import NotificationDropdown from '@/components/NotificationDropdown';
 
 // Link arrays at module scope — never recreated
 const patientLinks = [
@@ -27,6 +28,8 @@ const doctorLinks = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/appointments', label: 'Appointments', icon: Calendar },
   { href: '/prescriptions', label: 'Prescriptions', icon: ClipboardList },
+  { href: '/availability', label: 'Availability', icon: CalendarClock },
+  { href: '/verification', label: 'Verification', icon: ShieldCheck },
   { href: '/chat', label: 'Chat', icon: MessageSquare },
   { href: '/profile', label: 'Profile', icon: Settings },
 ];
@@ -134,6 +137,7 @@ export default React.memo(function Sidebar({ children }) {
           </div>
           <span className="font-bold gradient-text">MediCare</span>
         </div>
+        <div className="ml-auto"><NotificationDropdown /></div>
       </div>
 
       {mobileOpen && (

@@ -21,7 +21,11 @@ class JSONDatabase {
       messages: [],
       emergency_contacts: [],
       payments: [],
-      contact_messages: []
+      contact_messages: [],
+      reviews: [],
+      notifications: [],
+      password_resets: [],
+      availability: []
     };
     this.loadAll();
     this._rebuildIndexes();
@@ -287,5 +291,9 @@ module.exports = {
   Message: createModel('messages', db),
   EmergencyContact: createModel('emergency_contacts', db),
   Payment: createModel('payments', db),
-  ContactMessage: createModel('contact_messages', db)
+  ContactMessage: createModel('contact_messages', db),
+  Review: createModel('reviews', db),
+  Notification: createModel('notifications', db),
+  PasswordReset: createModel('password_resets', db),
+  Availability: createModel('availability', db)
 };
