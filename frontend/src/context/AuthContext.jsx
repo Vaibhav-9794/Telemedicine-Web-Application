@@ -3,7 +3,13 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import axios from 'axios';
 
-axios.defaults.baseURL = '/api';
+// In production: NEXT_PUBLIC_API_URL points directly to the backend (e.g. https://medicare-api.onrender.com/api)
+// In development: '/api' uses Next.js rewrites to proxy to localhost:5000
+const API_BASE = process.env.NEXT_PUBLIC_API_URL
+  ? `${process.env.NEXT_PUBLIC_API_URL}/api`
+  : '/api';
+
+axios.defaults.baseURL = API_BASE;
 
 const AuthContext = createContext();
 

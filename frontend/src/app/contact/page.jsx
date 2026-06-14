@@ -29,7 +29,7 @@ export default function Contact() {
 
     try {
       setSubmitting(true);
-      await axios.post('/api/contact', {
+      await axios.post('/contact', {
         name: form.name.trim(),
         email: form.email.trim(),
         subject: form.subject.trim(),
